@@ -1,6 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 3000);
@@ -8,6 +9,7 @@ const PUBLIC = path.join(__dirname, "public");
 const MAX_BODY = 1_000_000;
 const MODELS_MS = 15_000;
 const CHAT_MS = 120_000;
+const USER_RE = /^[A-Za-z0-9_:-]{1,80}$/;
 
 function send(res, status, body, headers) {
   const payload = typeof body === "string" ? body : JSON.stringify(body);
@@ -21,11 +23,119 @@ function send(res, status, body, headers) {
 
 function whoami(req) {
   return {
-    user: req.headers["x-hatch-user"] || null,
+    user: hatchUser(req),
     authMode: req.headers["x-hatch-auth-mode"] || null,
     projectId: req.headers["x-hatch-project-id"] || null,
     hasIdentityJwt: Boolean(req.headers["x-hatch-identity"]),
   };
+}
+
+function hatchUser(req) {
+  const id = String(req.headers["x-hatch-user"] || "").trim();
+  return USER_RE.test(id) ? id : null;
+}
+
+function storeDir() {
+  const candidates = [
+    process.env.RELAY_STORE_DIR,
+    "/data/relay",
+    path.join(__dirname, "data"),
+  ].filter(Boolean);
+  for (const dir of candidates) {
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return dir;
+    } catch {
+      // try next
+    }
+  }
+  const fallback = path.join(__dirname, "data");
+  fs.mkdirSync(fallback, { recursive: true, mode: 0o700 });
+  return fallback;
+}
+
+function storeKey() {
+  const fromEnv = process.env.RELAY_STORE_SECRET;
+  if (fromEnv && fromEnv.length >= 16) {
+    return crypto.createHash("sha256").update(fromEnv).digest();
+  }
+  const file = path.join(storeDir(), ".secret");
+  try {
+    const raw = fs.readFileSync(file, "utf8").trim();
+    if (raw) return Buffer.from(raw, "base64");
+  } catch {
+    // create
+  }
+  const key = crypto.randomBytes(32);
+  fs.writeFileSync(file, key.toString("base64"), { mode: 0o600 });
+  return key;
+}
+
+function seal(plain) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", storeKey(), iv);
+  const enc = Buffer.concat([cipher.update(String(plain), "utf8"), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), enc]).toString("base64");
+}
+
+function openSealed(packed) {
+  const buf = Buffer.from(String(packed || ""), "base64");
+  if (buf.length < 29) return "";
+  const iv = buf.subarray(0, 12);
+  const tag = buf.subarray(12, 28);
+  const enc = buf.subarray(28);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", storeKey(), iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(enc), decipher.final()]).toString("utf8");
+}
+
+function storePath() {
+  return path.join(storeDir(), "settings.json");
+}
+
+function readStore() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(storePath(), "utf8"));
+    return raw && typeof raw === "object" && raw.users && typeof raw.users === "object"
+      ? raw
+      : { users: {} };
+  } catch {
+    return { users: {} };
+  }
+}
+
+function writeStore(data) {
+  const tmp = storePath() + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify({ users: data.users || {} }), { mode: 0o600 });
+  fs.renameSync(tmp, storePath());
+}
+
+function publicSettings(user) {
+  if (!user) {
+    return { user: null, canPersist: false, hasKey: false, baseUrl: "", model: "" };
+  }
+  const row = readStore().users[user];
+  return {
+    user,
+    canPersist: true,
+    hasKey: Boolean(row?.apiKeyCipher),
+    baseUrl: row?.baseUrl || "",
+    model: row?.model || "",
+  };
+}
+
+function storedSecret(user) {
+  if (!user) return null;
+  const row = readStore().users[user];
+  if (!row?.apiKeyCipher) return null;
+  try {
+    const apiKey = openSealed(row.apiKeyCipher);
+    if (!apiKey) return null;
+    return { baseUrl: row.baseUrl || "", model: row.model || "", apiKey };
+  } catch {
+    return null;
+  }
 }
 
 function isBlockedHost(hostname) {
@@ -114,12 +224,56 @@ async function parseJsonBody(req) {
   }
 }
 
-function credential(body) {
-  const apiKey = String(body.apiKey || "").trim();
-  const parsed = openaiRoot(body.baseUrl);
+function resolveCreds(req, body) {
+  const saved = storedSecret(hatchUser(req));
+  const baseUrl = String(body.baseUrl || saved?.baseUrl || "").trim();
+  const apiKey = String(body.apiKey || saved?.apiKey || "").trim();
+  const parsed = openaiRoot(baseUrl);
   if (parsed.error) return parsed;
   if (!apiKey) return { error: "api_key_required" };
-  return { root: parsed.root, apiKey };
+  return { root: parsed.root, apiKey, model: String(body.model || saved?.model || "").trim() };
+}
+
+async function handleSettings(req, res) {
+  const user = hatchUser(req);
+  if (req.method === "GET") {
+    return send(res, 200, publicSettings(user));
+  }
+  if (!user) {
+    return send(res, 401, { error: "login_required" });
+  }
+  if (req.method === "DELETE") {
+    const data = readStore();
+    delete data.users[user];
+    writeStore(data);
+    return send(res, 200, publicSettings(user));
+  }
+  if (req.method !== "PUT") {
+    return send(res, 405, { error: "method_not_allowed" });
+  }
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return send(res, 400, { error: err.code || "invalid_json" });
+  }
+  const incomingKey = String(body.apiKey || "").trim();
+  const saved = storedSecret(user);
+  const apiKey = incomingKey || saved?.apiKey || "";
+  const baseUrl = String(body.baseUrl || saved?.baseUrl || "").trim();
+  const model = String(body.model || saved?.model || "").trim();
+  const parsed = openaiRoot(baseUrl);
+  if (parsed.error) return send(res, 400, { error: parsed.error });
+  if (!apiKey) return send(res, 400, { error: "api_key_required" });
+  const data = readStore();
+  data.users[user] = {
+    baseUrl,
+    model,
+    apiKeyCipher: seal(apiKey),
+    updatedAt: new Date().toISOString(),
+  };
+  writeStore(data);
+  return send(res, 200, publicSettings(user));
 }
 
 async function handleModels(req, res) {
@@ -129,7 +283,7 @@ async function handleModels(req, res) {
   } catch (err) {
     return send(res, 400, { error: err.code || "invalid_json" });
   }
-  const creds = credential(body);
+  const creds = resolveCreds(req, body);
   if (creds.error) return send(res, 400, { error: creds.error });
   try {
     const upstream = await fetch(`${creds.root}/models`, {
@@ -169,9 +323,9 @@ async function handleChat(req, res) {
   } catch (err) {
     return send(res, 400, { error: err.code || "invalid_json" });
   }
-  const creds = credential(body);
+  const creds = resolveCreds(req, body);
   if (creds.error) return send(res, 400, { error: creds.error });
-  const model = String(body.model || "").trim();
+  const model = String(body.model || creds.model || "").trim();
   if (!model) return send(res, 400, { error: "model_required" });
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return send(res, 400, { error: "messages_required" });
@@ -249,6 +403,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === "GET" && url.pathname === "/api/whoami") {
     return send(res, 200, whoami(req));
+  }
+  if (url.pathname === "/api/settings") {
+    return handleSettings(req, res);
   }
   if (req.method === "POST" && url.pathname === "/api/models") {
     return handleModels(req, res);

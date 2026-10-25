@@ -70,7 +70,7 @@
       padding: 10px 12px;
     }
     input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
-    .row { display: flex; gap: 8px; align-items: end; }
+    .row { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
     .row select { flex: 1; }
     .primary {
       background: var(--accent);
@@ -141,13 +141,13 @@
         <h1>Relay</h1>
         <span>OpenAI compatible</span>
       </div>
-      <p class="lede">填自己的网关和密钥。请求由这台 Hatch 应用转发，密钥不落盘。</p>
+      <p class="lede">填自己的网关和密钥。登录用户点「记住密钥」后按账号保存在这台应用里，下次进来不用再贴。</p>
       <div class="presets" id="presets"></div>
       <label>Base URL
         <input id="baseUrl" placeholder="https://api.openai.com/v1" autocomplete="off" />
       </label>
       <label>API Key
-        <input id="apiKey" type="password" placeholder="sk-…" autocomplete="off" />
+        <input id="apiKey" type="password" placeholder="sk-… 已保存可留空" autocomplete="off" />
       </label>
       <div class="row">
         <label style="flex:1">模型
@@ -159,7 +159,8 @@
         <input id="modelManual" placeholder="gpt-4o-mini" autocomplete="off" />
       </label>
       <div class="row">
-        <button type="button" class="primary" id="save">用于对话</button>
+        <button type="button" class="primary" id="save">记住密钥</button>
+        <button type="button" class="ghost" id="forget">忘记</button>
         <button type="button" class="ghost" id="clear">清空会话</button>
       </div>
       <p class="hint" id="status">还没连接。</p>
@@ -186,7 +187,6 @@
       ["OpenRouter", "https://openrouter.ai/api/v1"],
       ["SiliconFlow", "https://api.siliconflow.cn/v1"],
     ];
-    const storeKey = "hatch-relay-settings";
     const els = {
       presets: document.getElementById("presets"),
       baseUrl: document.getElementById("baseUrl"),
@@ -200,7 +200,11 @@
       prompt: document.getElementById("prompt"),
       composer: document.getElementById("composer"),
     };
-    const state = { messages: [], busy: false };
+    const state = { messages: [], busy: false, user: null, hasKey: false };
+
+    function localKey() {
+      return "hatch-relay:" + (state.user || "anon");
+    }
 
     function settings() {
       return {
@@ -210,22 +214,31 @@
       };
     }
 
-    function persist() {
-      const s = settings();
-      sessionStorage.setItem(storeKey, JSON.stringify(s));
+    function applyModel(id) {
+      if (!id) return;
+      els.modelManual.value = id;
+      ensureOption(id);
+      els.model.value = id;
     }
 
-    function restore() {
+    function persistLocal() {
+      const s = settings();
+      const payload = { baseUrl: s.baseUrl, model: s.model };
+      if (s.apiKey) payload.apiKey = s.apiKey;
       try {
-        const s = JSON.parse(sessionStorage.getItem(storeKey) || "{}");
+        localStorage.setItem(localKey(), JSON.stringify(payload));
+      } catch {}
+    }
+
+    function restoreLocal() {
+      try {
+        const s = JSON.parse(localStorage.getItem(localKey()) || "{}");
         if (s.baseUrl) els.baseUrl.value = s.baseUrl;
-        if (s.apiKey) els.apiKey.value = s.apiKey;
-        if (s.model) {
-          els.modelManual.value = s.model;
-          ensureOption(s.model);
-          els.model.value = s.model;
+        if (s.apiKey) {
+          els.apiKey.value = s.apiKey;
+          state.hasKey = true;
         }
-        if (s.baseUrl && s.apiKey) els.status.textContent = "已从本页会话恢复，可直接聊。";
+        if (s.model) applyModel(s.model);
       } catch {}
     }
 
@@ -282,12 +295,12 @@
 
     async function loadModels() {
       const s = settings();
-      if (!s.baseUrl || !s.apiKey) {
+      if (!s.baseUrl || (!s.apiKey && !state.hasKey)) {
         els.status.textContent = "先填 Base URL 和 API Key。";
         return;
       }
       els.status.textContent = "正在拉取模型…";
-      persist();
+      persistLocal();
       const res = await fetch("/api/models", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -314,11 +327,11 @@
 
     async function sendChat(text) {
       const s = settings();
-      if (!s.baseUrl || !s.apiKey || !s.model) {
+      if (!s.baseUrl || (!s.apiKey && !state.hasKey) || !s.model) {
         addMsg("system", "还缺 Base URL、API Key 或模型。", "warn");
         return;
       }
-      persist();
+      persistLocal();
       state.messages.push({ role: "user", content: text });
       addMsg("user", text);
       const bubble = addMsg("assistant", "");
@@ -390,9 +403,47 @@
     document.getElementById("loadModels").onclick = () => loadModels().catch((e) => {
       els.status.textContent = String(e);
     });
-    document.getElementById("save").onclick = () => {
-      persist();
-      els.status.textContent = settings().model ? "已用于对话。" : "还没选模型。";
+    async function saveRemote() {
+      const s = settings();
+      if (!s.baseUrl || (!s.apiKey && !state.hasKey)) {
+        els.status.textContent = "先填 Base URL 和 API Key。";
+        return;
+      }
+      persistLocal();
+      if (!state.user) {
+        els.status.textContent = "未登录 Hatch，密钥只留在这台浏览器。登录后可按账号记住。";
+        return;
+      }
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ baseUrl: s.baseUrl, apiKey: s.apiKey, model: s.model }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        els.status.textContent = data.error === "login_required"
+          ? "请先登录 Hatch。"
+          : (data.error || "保存失败");
+        return;
+      }
+      state.hasKey = Boolean(data.hasKey);
+      if (state.hasKey) els.apiKey.value = "";
+      els.status.textContent = "已按账号记住，下次登录会自动带上。";
+    }
+
+    document.getElementById("save").onclick = () => saveRemote().catch((e) => {
+      els.status.textContent = String(e);
+    });
+    document.getElementById("forget").onclick = async () => {
+      try {
+        localStorage.removeItem(localKey());
+      } catch {}
+      els.apiKey.value = "";
+      state.hasKey = false;
+      if (state.user) {
+        await fetch("/api/settings", { method: "DELETE" }).catch(() => {});
+      }
+      els.status.textContent = "已忘记这台账号的密钥。";
     };
     document.getElementById("clear").onclick = () => {
       state.messages = [];
@@ -406,7 +457,7 @@
     };
     els.model.onchange = () => {
       els.modelManual.value = els.model.value;
-      persist();
+      persistLocal();
     };
     els.composer.onsubmit = (e) => {
       e.preventDefault();
@@ -422,14 +473,37 @@
       }
     });
 
-    fetch("/api/whoami").then((r) => r.json()).then((j) => {
-      const who = j.user || "匿名访客";
-      const mode = j.authMode ? " · " + j.authMode : "";
+    async function boot() {
+      let who = { user: null, authMode: null };
+      try {
+        who = await fetch("/api/whoami").then((r) => r.json());
+      } catch {}
+      state.user = who.user || null;
+      const label = state.user || "匿名访客";
+      const mode = who.authMode ? " · " + who.authMode : "";
       els.who.innerHTML = "经由 Hatch 发布 · <strong></strong>" + mode;
-      els.who.querySelector("strong").textContent = who;
-    }).catch(() => {});
+      els.who.querySelector("strong").textContent = label;
 
-    restore();
+      let remote = { canPersist: false, hasKey: false, baseUrl: "", model: "" };
+      try {
+        remote = await fetch("/api/settings").then((r) => r.json());
+      } catch {}
+      if (remote.baseUrl) els.baseUrl.value = remote.baseUrl;
+      if (remote.model) applyModel(remote.model);
+      state.hasKey = Boolean(remote.hasKey);
+      if (!remote.hasKey && !remote.baseUrl) restoreLocal();
+      if (state.hasKey) els.apiKey.value = "";
+      markPreset();
+      if (state.hasKey) {
+        els.status.textContent = "已按账号恢复密钥，可直接聊。";
+      } else if (state.user) {
+        els.status.textContent = "已登录。填密钥后点「记住密钥」，下次不用再贴。";
+      } else {
+        els.status.textContent = "未登录：密钥只留在这台浏览器。";
+      }
+    }
+
+    boot();
     markPreset();
   </script>
 </body>
