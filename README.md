@@ -1,27 +1,31 @@
 # hatch-demo-bff
 
-Minimal **page + `/api`** app for Hatch to publish from this GitHub repository. Coolify builds the `Dockerfile` and runs one process. Hatch only issues the share link and visitor identity.
+Hatch 上的 **OpenAI 兼容聊天包装器**。页面填 `base_url` 和 API key，选模型后对话。浏览器只打这台服务；服务再去调上游。密钥不写盘、不进日志。
 
-## What it does
+Coolify 按 `Dockerfile` 构建并跑一个进程。Hatch 只发分享链接和访客身份。
 
-- `/` — a small page that calls the APIs below
-- `GET /healthz` — Coolify / Hatch health check (no login)
-- `GET /api/whoami` — echoes Hatch identity headers (`X-Hatch-User`, `X-Hatch-Auth-Mode`)
-- `GET /api/check?url=` — server-side fetch of a public `http(s)` URL (not the browser)
+## 能做什么
 
-API keys for other systems belong in this app's own settings later. This sample has none.
+- `/` — 聊天页：预设常见兼容网关，拉取 `/v1/models`，流式对话
+- `GET /healthz` — Coolify / Hatch 探活
+- `GET /api/whoami` — 回显 Hatch 身份头
+- `POST /api/models` — `{ baseUrl, apiKey }` → 上游模型列表
+- `POST /api/chat` — `{ baseUrl, apiKey, model, messages, stream }` → 转发 `/v1/chat/completions`
 
-## Run locally
+兼容把聊天接口做成 OpenAI 形状的服务，例如 OpenAI、DeepSeek、Groq、OpenRouter、SiliconFlow。Azure OpenAI 路径不同，这个 demo 不覆盖。
+
+`baseUrl` 写成根或带 `/v1` 都可以。内网、本机、链路本地地址会被拒绝，避免 SSRF。
+
+## 本地跑
 
 ```bash
-npm install
 npm start
 # http://127.0.0.1:3000
 ```
 
-## Publish from Hatch
+## 从 Hatch 发布
 
-Origin must be Coolify. Repository must be public `https://github.com/owner/repo`.
+Origin 必须是 Coolify。仓库必须是公开的 `https://github.com/owner/repo`。
 
 ```bash
 curl -X PUT "$HATCH/api/v1/projects/$PROJECT_ID/source" \
@@ -33,4 +37,4 @@ curl -X POST "$HATCH/api/v1/deploy" \
   -d "{\"source\":\"git\",\"projectId\":\"$PROJECT_ID\"}"
 ```
 
-Hatch asks Coolify to clone this repo, build the Dockerfile, and start port 3000. Open the Hatch share link (not the Coolify hostname) if Edge is on.
+打开 Hatch 的分享链接（开了 Edge 时不要用 Coolify 主机名）。
