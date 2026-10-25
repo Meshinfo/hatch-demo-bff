@@ -3,34 +3,434 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Hatch demo BFF</title>
+  <title>Relay · Hatch</title>
   <style>
-    body { font-family: sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
-    pre { background: #f4f4f4; padding: 0.75rem; overflow: auto; }
-    label, button { display: block; margin-top: 1rem; }
-    input { width: 100%; box-sizing: border-box; }
+    :root {
+      color-scheme: dark;
+      --bg: #10140c;
+      --panel: #181d13;
+      --line: #2b3322;
+      --ink: #e8eedd;
+      --mute: #8b9478;
+      --accent: #d6ff4b;
+      --accent-ink: #1a2208;
+      --user: #243016;
+      --warn: #ffb4a2;
+      --mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+      --sans: "IBM Plex Sans", "Source Han Sans SC", "Noto Sans SC", "PingFang SC", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #2a3618 0%, transparent 55%),
+        var(--bg);
+      color: var(--ink);
+      font: 15px/1.5 var(--sans);
+    }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    .app {
+      height: 100%;
+      display: grid;
+      grid-template-columns: minmax(280px, 340px) 1fr;
+    }
+    aside {
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 88%, black);
+      padding: 22px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow: auto;
+    }
+    .brand { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+    .brand h1 { margin: 0; font-size: 22px; letter-spacing: -0.03em; }
+    .brand span { color: var(--mute); font-size: 12px; }
+    .lede { margin: 0; color: var(--mute); font-size: 13px; }
+    .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+    .presets button, .ghost, .primary {
+      border: 1px solid var(--line);
+      background: transparent;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    .presets button[aria-pressed="true"], .presets button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    label { display: grid; gap: 6px; font-size: 12px; color: var(--mute); }
+    input, select {
+      width: 100%;
+      background: #10150d;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
+    .row { display: flex; gap: 8px; align-items: end; }
+    .row select { flex: 1; }
+    .primary {
+      background: var(--accent);
+      color: var(--accent-ink);
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    .ghost:hover { border-color: var(--accent); }
+    .hint, .who { font-size: 12px; color: var(--mute); }
+    .who { margin-top: auto; }
+    .who strong { color: var(--ink); font-weight: 550; }
+    main { display: grid; grid-template-rows: 1fr auto; min-width: 0; }
+    #log {
+      overflow: auto;
+      padding: 28px 8vw 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .empty {
+      margin: auto;
+      max-width: 28rem;
+      color: var(--mute);
+      text-align: center;
+    }
+    .empty strong { display: block; color: var(--ink); font-size: 22px; margin-bottom: 8px; }
+    .msg { max-width: 44rem; width: min(100%, 44rem); margin: 0 auto; }
+    .msg .role { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); margin-bottom: 4px; }
+    .msg .bubble {
+      white-space: pre-wrap;
+      word-break: break-word;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: var(--panel);
+    }
+    .msg.user .bubble { background: var(--user); }
+    .msg.warn .bubble { border-color: #5a2e24; color: var(--warn); }
+    form.composer {
+      border-top: 1px solid var(--line);
+      padding: 14px 8vw 22px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+    textarea {
+      resize: none;
+      min-height: 52px;
+      max-height: 180px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+    }
+    form.composer .primary { height: 52px; padding: 0 18px; border-radius: 14px; }
+    @media (max-width: 840px) {
+      .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 46vh; }
+      #log, form.composer { padding-left: 16px; padding-right: 16px; }
+    }
   </style>
 </head>
 <body>
-  <h1>Hatch demo BFF</h1>
-  <p>This page is static. <code>/api/whoami</code> and <code>/api/check</code> run on the same process.</p>
-  <h2>Who opened this</h2>
-  <pre id="who">loading…</pre>
-  <h2>Probe a public URL</h2>
-  <label>URL <input id="url" value="https://example.com" /></label>
-  <button type="button" id="go">Check</button>
-  <pre id="out"></pre>
+  <div class="app">
+    <aside>
+      <div class="brand">
+        <h1>Relay</h1>
+        <span>OpenAI compatible</span>
+      </div>
+      <p class="lede">填自己的网关和密钥。请求由这台 Hatch 应用转发，密钥不落盘。</p>
+      <div class="presets" id="presets"></div>
+      <label>Base URL
+        <input id="baseUrl" placeholder="https://api.openai.com/v1" autocomplete="off" />
+      </label>
+      <label>API Key
+        <input id="apiKey" type="password" placeholder="sk-…" autocomplete="off" />
+      </label>
+      <div class="row">
+        <label style="flex:1">模型
+          <select id="model"></select>
+        </label>
+        <button type="button" class="ghost" id="loadModels">拉取</button>
+      </div>
+      <label>或手写模型名
+        <input id="modelManual" placeholder="gpt-4o-mini" autocomplete="off" />
+      </label>
+      <div class="row">
+        <button type="button" class="primary" id="save">用于对话</button>
+        <button type="button" class="ghost" id="clear">清空会话</button>
+      </div>
+      <p class="hint" id="status">还没连接。</p>
+      <p class="who" id="who">经由 Hatch 发布</p>
+    </aside>
+    <main>
+      <div id="log">
+        <div class="empty" id="empty">
+          <strong>先连上接口</strong>
+          选一个兼容网关，填密钥，拉取模型。之后这里就是对话。
+        </div>
+      </div>
+      <form class="composer" id="composer">
+        <textarea id="prompt" rows="2" placeholder="问一句。Enter 发送，Shift+Enter 换行。"></textarea>
+        <button class="primary" type="submit" id="send">发送</button>
+      </form>
+    </main>
+  </div>
   <script>
-    fetch("/api/whoami").then((r) => r.json()).then((j) => {
-      document.getElementById("who").textContent = JSON.stringify(j, null, 2);
-    }).catch((e) => {
-      document.getElementById("who").textContent = String(e);
-    });
-    document.getElementById("go").onclick = async () => {
-      const url = document.getElementById("url").value;
-      const r = await fetch("/api/check?url=" + encodeURIComponent(url));
-      document.getElementById("out").textContent = JSON.stringify(await r.json(), null, 2);
+    const PRESETS = [
+      ["OpenAI", "https://api.openai.com/v1"],
+      ["DeepSeek", "https://api.deepseek.com/v1"],
+      ["Groq", "https://api.groq.com/openai/v1"],
+      ["OpenRouter", "https://openrouter.ai/api/v1"],
+      ["SiliconFlow", "https://api.siliconflow.cn/v1"],
+    ];
+    const storeKey = "hatch-relay-settings";
+    const els = {
+      presets: document.getElementById("presets"),
+      baseUrl: document.getElementById("baseUrl"),
+      apiKey: document.getElementById("apiKey"),
+      model: document.getElementById("model"),
+      modelManual: document.getElementById("modelManual"),
+      status: document.getElementById("status"),
+      who: document.getElementById("who"),
+      log: document.getElementById("log"),
+      empty: document.getElementById("empty"),
+      prompt: document.getElementById("prompt"),
+      composer: document.getElementById("composer"),
     };
+    const state = { messages: [], busy: false };
+
+    function settings() {
+      return {
+        baseUrl: els.baseUrl.value.trim(),
+        apiKey: els.apiKey.value.trim(),
+        model: (els.modelManual.value.trim() || els.model.value || "").trim(),
+      };
+    }
+
+    function persist() {
+      const s = settings();
+      sessionStorage.setItem(storeKey, JSON.stringify(s));
+    }
+
+    function restore() {
+      try {
+        const s = JSON.parse(sessionStorage.getItem(storeKey) || "{}");
+        if (s.baseUrl) els.baseUrl.value = s.baseUrl;
+        if (s.apiKey) els.apiKey.value = s.apiKey;
+        if (s.model) {
+          els.modelManual.value = s.model;
+          ensureOption(s.model);
+          els.model.value = s.model;
+        }
+        if (s.baseUrl && s.apiKey) els.status.textContent = "已从本页会话恢复，可直接聊。";
+      } catch {}
+    }
+
+    function ensureOption(id) {
+      if (!id) return;
+      if (![...els.model.options].some((o) => o.value === id)) {
+        const opt = document.createElement("option");
+        opt.value = id;
+        opt.textContent = id;
+        els.model.appendChild(opt);
+      }
+    }
+
+    function markPreset() {
+      const current = els.baseUrl.value.trim().replace(/\/+$/, "");
+      for (const btn of els.presets.querySelectorAll("button")) {
+        btn.setAttribute("aria-pressed", String(btn.dataset.url.replace(/\/+$/, "") === current));
+      }
+    }
+
+    PRESETS.forEach(([name, url]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = name;
+      btn.dataset.url = url;
+      btn.onclick = () => {
+        els.baseUrl.value = url;
+        markPreset();
+      };
+      els.presets.appendChild(btn);
+    });
+    els.baseUrl.addEventListener("input", markPreset);
+
+    function hideEmpty() {
+      if (els.empty) els.empty.remove();
+    }
+
+    function addMsg(role, text, extraClass) {
+      hideEmpty();
+      const wrap = document.createElement("div");
+      wrap.className = "msg " + role + (extraClass ? " " + extraClass : "");
+      const label = document.createElement("div");
+      label.className = "role";
+      label.textContent = role === "user" ? "你" : role === "assistant" ? "模型" : "系统";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text;
+      wrap.appendChild(label);
+      wrap.appendChild(bubble);
+      els.log.appendChild(wrap);
+      els.log.scrollTop = els.log.scrollHeight;
+      return bubble;
+    }
+
+    async function loadModels() {
+      const s = settings();
+      if (!s.baseUrl || !s.apiKey) {
+        els.status.textContent = "先填 Base URL 和 API Key。";
+        return;
+      }
+      els.status.textContent = "正在拉取模型…";
+      persist();
+      const res = await fetch("/api/models", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ baseUrl: s.baseUrl, apiKey: s.apiKey }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        els.status.textContent = data.message || data.error || "拉取失败";
+        return;
+      }
+      els.model.replaceChildren();
+      (data.models || []).forEach((id) => ensureOption(id));
+      if (s.model) {
+        ensureOption(s.model);
+        els.model.value = s.model;
+      } else if (data.models?.[0]) {
+        els.model.value = data.models[0];
+        els.modelManual.value = data.models[0];
+      }
+      els.status.textContent = (data.models || []).length
+        ? "已连接，" + data.models.length + " 个模型。"
+        : "已连接，但上游没返回模型，请手写模型名。";
+    }
+
+    async function sendChat(text) {
+      const s = settings();
+      if (!s.baseUrl || !s.apiKey || !s.model) {
+        addMsg("system", "还缺 Base URL、API Key 或模型。", "warn");
+        return;
+      }
+      persist();
+      state.messages.push({ role: "user", content: text });
+      addMsg("user", text);
+      const bubble = addMsg("assistant", "");
+      state.busy = true;
+      els.composer.querySelector("button").disabled = true;
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            baseUrl: s.baseUrl,
+            apiKey: s.apiKey,
+            model: s.model,
+            messages: state.messages,
+            stream: true,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const err = data.message || data.error || "对话失败";
+          bubble.textContent = err;
+          bubble.parentElement.classList.add("warn");
+          state.messages.pop();
+          return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let out = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split("\n");
+          buf = parts.pop() || "";
+          for (const line of parts) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const data = trimmed.slice(5).trim();
+            if (data === "[DONE]") continue;
+            try {
+              const json = JSON.parse(data);
+              const piece = json.choices?.[0]?.delta?.content || json.choices?.[0]?.message?.content || "";
+              if (piece) {
+                out += piece;
+                bubble.textContent = out;
+                els.log.scrollTop = els.log.scrollHeight;
+              }
+            } catch {}
+          }
+        }
+        if (!out) {
+          bubble.textContent = "上游没有返回文本。";
+          bubble.parentElement.classList.add("warn");
+          state.messages.pop();
+          return;
+        }
+        state.messages.push({ role: "assistant", content: out });
+      } catch (err) {
+        bubble.textContent = err instanceof Error ? err.message : String(err);
+        bubble.parentElement.classList.add("warn");
+        state.messages.pop();
+      } finally {
+        state.busy = false;
+        els.composer.querySelector("button").disabled = false;
+      }
+    }
+
+    document.getElementById("loadModels").onclick = () => loadModels().catch((e) => {
+      els.status.textContent = String(e);
+    });
+    document.getElementById("save").onclick = () => {
+      persist();
+      els.status.textContent = settings().model ? "已用于对话。" : "还没选模型。";
+    };
+    document.getElementById("clear").onclick = () => {
+      state.messages = [];
+      els.log.replaceChildren();
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.id = "empty";
+      empty.innerHTML = "<strong>会话已清空</strong>接着问即可。";
+      els.log.appendChild(empty);
+      els.empty = empty;
+    };
+    els.model.onchange = () => {
+      els.modelManual.value = els.model.value;
+      persist();
+    };
+    els.composer.onsubmit = (e) => {
+      e.preventDefault();
+      const text = els.prompt.value.trim();
+      if (!text || state.busy) return;
+      els.prompt.value = "";
+      sendChat(text);
+    };
+    els.prompt.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        els.composer.requestSubmit();
+      }
+    });
+
+    fetch("/api/whoami").then((r) => r.json()).then((j) => {
+      const who = j.user || "匿名访客";
+      const mode = j.authMode ? " · " + j.authMode : "";
+      els.who.innerHTML = "经由 Hatch 发布 · <strong></strong>" + mode;
+      els.who.querySelector("strong").textContent = who;
+    }).catch(() => {});
+
+    restore();
+    markPreset();
   </script>
 </body>
 </html>
