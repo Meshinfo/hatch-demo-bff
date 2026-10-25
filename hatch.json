@@ -1,0 +1,8 @@
+{
+  "profile": "server",
+  "port": 3000,
+  "healthcheck": {
+    "path": "/healthz",
+    "timeoutSeconds": 60
+  }
+}

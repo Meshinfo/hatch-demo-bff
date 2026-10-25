@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hatch demo BFF</title>
+  <style>
+    body { font-family: sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    pre { background: #f4f4f4; padding: 0.75rem; overflow: auto; }
+    label, button { display: block; margin-top: 1rem; }
+    input { width: 100%; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <h1>Hatch demo BFF</h1>
+  <p>This page is static. <code>/api/whoami</code> and <code>/api/check</code> run on the same process.</p>
+  <h2>Who opened this</h2>
+  <pre id="who">loading…</pre>
+  <h2>Probe a public URL</h2>
+  <label>URL <input id="url" value="https://example.com" /></label>
+  <button type="button" id="go">Check</button>
+  <pre id="out"></pre>
+  <script>
+    fetch("/api/whoami").then((r) => r.json()).then((j) => {
+      document.getElementById("who").textContent = JSON.stringify(j, null, 2);
+    }).catch((e) => {
+      document.getElementById("who").textContent = String(e);
+    });
+    document.getElementById("go").onclick = async () => {
+      const url = document.getElementById("url").value;
+      const r = await fetch("/api/check?url=" + encodeURIComponent(url));
+      document.getElementById("out").textContent = JSON.stringify(await r.json(), null, 2);
+    };
+  </script>
+</body>
+</html>
