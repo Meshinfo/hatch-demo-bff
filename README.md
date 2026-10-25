@@ -19,11 +19,18 @@ npm start
 # http://127.0.0.1:3000
 ```
 
-## Publish from Hatch (once git binding exists)
+## Publish from Hatch
 
-1. App origin is Coolify.
-2. Bind `https://github.com/Meshinfo/hatch-demo-bff` branch `main`.
-3. Publish. Hatch asks Coolify to build this Dockerfile and start port 3000.
-4. Open the Hatch share link (not the Coolify hostname) if Edge is on.
+Origin must be Coolify. Repository must be public `https://github.com/owner/repo`.
 
-Until Hatch exposes that bind API, you can create a **public git** application in Coolify yourself: repository URL above, branch `main`, build pack `dockerfile`, port `3000`.
+```bash
+curl -X PUT "$HATCH/api/v1/projects/$PROJECT_ID/source" \
+  -H "Authorization: Bearer $HATCH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"repository":"https://github.com/Meshinfo/hatch-demo-bff","branch":"main"}'
+
+curl -X POST "$HATCH/api/v1/deploy" \
+  -H "Authorization: Bearer $HATCH_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"source\":\"git\",\"projectId\":\"$PROJECT_ID\"}"
+```
+
+Hatch asks Coolify to clone this repo, build the Dockerfile, and start port 3000. Open the Hatch share link (not the Coolify hostname) if Edge is on.
